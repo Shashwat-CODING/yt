@@ -26,87 +26,101 @@ def extract_audio_url(url):
             except Exception as e:
                 logger.warning(f"Error reading client_secrets.json: {str(e)}")
         
-        # Random Indian IP to help with geo-bypass
+        # Random proxies to help with geo-bypass (optional)
         indian_ips = [
             "103.48.198.0", "122.176.32.0", "182.74.80.0", 
             "117.196.0.0", "14.139.45.0", "103.27.8.0"
         ]
         fake_ip = random.choice(indian_ips)
         
-        # Base options for yt-dlp with enhanced geo-bypass
+        # Base options for yt-dlp with different player clients and formats
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'geo_bypass_country': 'IN',  # Set geo-location to India
             'geo_bypass': True,
-            'geo_verification_proxy': f"{fake_ip}:80",
-            'source_address': fake_ip,  # Bind to specific IP
-            'referer': 'https://www.youtube.com/',  # Add referer
+            'geo_bypass_country': 'US',  # Try US first
             'http_headers': {
-                'X-Forwarded-For': fake_ip,
-                'Accept-Language': 'en-IN,hi-IN;q=0.9,en;q=0.8,hi;q=0.7',
+                'Accept-Language': 'en-US,en;q=0.9',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Referer': 'https://www.youtube.com/',
                 'Origin': 'https://www.youtube.com',
+            },
+            # Use multiple extractors in sequence
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web', 'android', 'ios'],  # Try multiple clients
+                    'player_skip': ['webpage', 'configs', 'js']  # Skip some potentially problematic extractions
+                }
             }
         }
         
-        # Add authentication methods in order of preference
-        auth_method_used = "none"
-        
-        # 1. Try with cookies if available
+        # Add authentication methods
         if os.path.exists(cookies_path):
             logger.info(f"Using cookies file for authentication: {cookies_path}")
             ydl_opts['cookiefile'] = cookies_path
             auth_method_used = "cookies"
+        else:
+            auth_method_used = "none"
         
-        # 2. Add API key if available (as a backup)
-        if api_key:
-            logger.info("Using API key from client_secrets.json")
-            ydl_opts['youtube_include_dash_manifest'] = False
-            auth_method_used = f"{auth_method_used}+api_key"
+        # Try extraction methods in sequence
+        extraction_methods = [
+            # Method 1: Web client with default settings
+            ydl_opts,
             
-        logger.info(f"Attempting extraction with auth method: {auth_method_used}")
+            # Method 2: Android client
+            {**ydl_opts, 
+             'format': 'bestaudio[acodec^=opus]/bestaudio/best',
+             'extractor_args': {'youtube': {'player_client': ['android']}}
+            },
+            
+            # Method 3: iOS client
+            {**ydl_opts, 
+             'format': 'bestaudio[acodec^=opus]/bestaudio/best',
+             'extractor_args': {'youtube': {'player_client': ['ios']}}
+            },
+            
+            # Method 4: With geo-bypass to India
+            {**ydl_opts, 
+             'geo_bypass_country': 'IN',
+             'http_headers': {**ydl_opts['http_headers'], 'X-Forwarded-For': fake_ip,
+                             'Accept-Language': 'en-IN,hi-IN;q=0.9,en;q=0.8,hi;q=0.7'}
+            },
+            
+            # Method 5: Simplest options possible
+            {'format': 'bestaudio', 'quiet': True, 'no_warnings': True, 'geo_bypass': True}
+        ]
         
-        # First try with regular options
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                logger.info(f"Successfully extracted audio URL using auth method: {auth_method_used}")
-                return {
-                    'url': info['url'],
-                    'title': info['title'],
-                    'author': info['uploader'],
-                    'thumbnail': info['thumbnail'],
-                    'auth_method': auth_method_used
-                }
-        except Exception as e:
-            if "403" in str(e):
-                # If we got a 403, try again with alternative options
-                logger.warning(f"Got 403 error, trying alternative approach: {str(e)}")
-                
-                # Alternative approach - sometimes works for 403 errors
-                alt_opts = ydl_opts.copy()
-                alt_opts['format'] = 'bestaudio[acodec^=opus]/bestaudio/best'
-                alt_opts['extractor_args'] = {'youtube': {'player_client': ['android']}}
-                
-                with yt_dlp.YoutubeDL(alt_opts) as ydl:
+        # Try each method until one works
+        last_error = None
+        for i, method_opts in enumerate(extraction_methods):
+            try:
+                logger.info(f"Trying extraction method {i+1}/{len(extraction_methods)}")
+                with yt_dlp.YoutubeDL(method_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
-                    logger.info(f"Successfully extracted audio URL using alternative method")
+                    
+                    # Check if we got proper info
+                    if not info or 'url' not in info:
+                        raise Exception("Missing URL in extracted info")
+                    
+                    logger.info(f"Successfully extracted audio URL using method {i+1}")
                     return {
                         'url': info['url'],
-                        'title': info['title'],
-                        'author': info['uploader'],
-                        'thumbnail': info['thumbnail'],
-                        'auth_method': f"{auth_method_used}+alternative"
+                        'title': info.get('title', 'Unknown Title'),
+                        'author': info.get('uploader', 'Unknown Author'),
+                        'thumbnail': info.get('thumbnail', ''),
+                        'auth_method': f"{auth_method_used}_method{i+1}"
                     }
-            else:
-                # Re-raise other errors
-                raise
+            except Exception as e:
+                logger.warning(f"Method {i+1} failed: {str(e)}")
+                last_error = e
+                continue
+        
+        # If we get here, all methods failed
+        raise Exception(f"All extraction methods failed. Last error: {str(last_error)}")
                 
     except Exception as e:
         logger.error(f"yt-dlp extraction failed: {str(e)}")

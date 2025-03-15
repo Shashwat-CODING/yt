@@ -1,277 +1,266 @@
 import logging
 import os
-import json
+import yt_dlp
 import random
 import time
 import requests
-import re
-from urllib.parse import parse_qs, urlparse
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 
 logger = logging.getLogger(__name__)
 
+def fetch_proxy_instances():
+    """Fetch available proxy instances"""
+    try:
+        response = requests.get("https://raw.githubusercontent.com/n-ce/Uma/main/dynamic_instances.json", timeout=5)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.warning(f"Failed to fetch proxy instances, status code: {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Error fetching proxy instances: {str(e)}")
+    
+    # Default fallback instances if fetch fails
+    return {
+        "piped": [
+            "https://pipedapi.drgns.space",
+            "https://pipedapi.adminforge.de",
+            "https://nyc1.piapi.ggtyler.dev",
+            "https://pipedapi.leptons.xyz"
+        ],
+        "invidious": [
+            "https://invidious.nikkosphere.com",
+            "https://invidious.f5.si"
+        ]
+    }
+
+def is_url_accessible(url, timeout=5):
+    """Check if URL is accessible with HEAD request"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+        # Use HEAD request which is much faster than GET
+        response = requests.head(url, timeout=timeout, headers=headers, allow_redirects=True)
+        # Check if status code is in 2xx range or 3xx range
+        return 200 <= response.status_code < 400
+    except Exception as e:
+        logger.debug(f"URL accessibility check failed: {str(e)}")
+        return False
+
+def extract_video_id(url):
+    """Extract video ID from YouTube or YouTube Music URL"""
+    if 'v=' in url:
+        return url.split('v=')[1].split('&')[0]
+    elif 'youtu.be/' in url:
+        return url.split('youtu.be/')[1].split('?')[0]
+    return None
+
+def proxy_url_through_piped(audio_url, video_id, proxy_instances):
+    """Convert direct googlevideo URL to a proxied version via Piped or Invidious"""
+    # Parse original URL components
+    parsed = urllib.parse.urlparse(audio_url)
+    query_params = urllib.parse.parse_qs(parsed.query)
+    
+    # Add original host to query parameters
+    query_params['host'] = [parsed.netloc]
+    
+    # Build new query string
+    new_query = urllib.parse.urlencode(query_params, doseq=True)
+    
+    # Function to test a proxy instance
+    def test_proxy(instance):
+        if "piped" in instance:
+            # Piped audio proxy format
+            proxied_url = f"{instance}/streams/{video_id}"
+            try:
+                response = requests.get(proxied_url, timeout=3)
+                if response.status_code == 200:
+                    data = response.json()
+                    audio_streams = [s for s in data.get("audioStreams", []) if s.get("quality") == "medium" or "opus" in s.get("mimeType", "")]
+                    if audio_streams:
+                        return audio_streams[0].get("url")
+                return None
+            except:
+                return None
+        elif "invidious" in instance:
+            # Invidious format directly replaces the host
+            proxied_path = f"/videoplayback?{new_query}"
+            proxied_url = f"{instance}{proxied_path}"
+            if is_url_accessible(proxied_url, timeout=3):
+                return proxied_url
+            return None
+    
+    # Test all instances in parallel
+    valid_proxies = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        piped_futures = {executor.submit(test_proxy, instance): instance for instance in proxy_instances.get("piped", [])}
+        invidious_futures = {executor.submit(test_proxy, instance): instance for instance in proxy_instances.get("invidious", [])}
+        
+        # Check results as they complete
+        for future in as_completed(list(piped_futures.keys()) + list(invidious_futures.keys())):
+            result = future.result()
+            if result:
+                valid_proxies.append(result)
+                # Break early if we have a valid proxy
+                if len(valid_proxies) >= 1:
+                    executor._threads.clear()
+                    break
+    
+    return valid_proxies[0] if valid_proxies else None
+
 def extract_audio_url(url):
-    """Extract audio stream URL from YouTube Music using direct API requests"""
+    """Extract audio stream URL from YouTube Music with failover to proxy methods"""
+    # Start timing
+    start_time = time.time()
+    
+    # Extract video ID for potential proxy fallback
+    video_id = extract_video_id(url)
+    if not video_id:
+        logger.error("Could not extract video ID from URL")
+        return None
+    
+    # Fetch proxy instances in the background while trying direct extraction
+    proxy_instances = {}
+    
+    def fetch_proxies():
+        nonlocal proxy_instances
+        proxy_instances = fetch_proxy_instances()
+    
+    # Start proxy fetching in background
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        proxy_future = executor.submit(fetch_proxies)
+    
     try:
         # Define the path to the cookies file relative to this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
         cookies_path = os.path.join(current_dir, 'cookies.txt')
         
-        # List of diverse user agents to avoid fingerprinting
-        user_agents = [
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
-            'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36',
-        ]
+        # Use a single optimal user agent instead of random selection
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         
-        # Select a random user agent
-        user_agent = random.choice(user_agents)
-        
-        # Extract video ID from various YouTube Music URL formats
-        video_id = None
-        
-        # Direct YouTube Music watch URLs
-        if 'music.youtube.com/watch' in url and 'v=' in url:
-            video_id = re.search(r'v=([^&]+)', url).group(1)
-        # YouTube Music playlist URLs
-        elif 'music.youtube.com/playlist' in url and 'list=' in url:
-            playlist_id = re.search(r'list=([^&]+)', url).group(1)
-            logger.info(f"YouTube Music playlist detected: {playlist_id}")
-            # For playlists, we'll need to first get the video IDs
-            # This would require a different API call - for now we'll just extract from URL if possible
-            if 'video_id' in url:
-                video_id = re.search(r'video_id=([^&]+)', url).group(1)
-            else:
-                # We'd need separate logic to get first video from playlist
-                # For now, fail gracefully
-                raise Exception("For playlists, please provide a direct video URL from the playlist")
-        # Handle YouTube's shortened URLs
-        elif 'youtu.be/' in url:
-            video_id = url.split('youtu.be/')[1].split('?')[0]
-        # Regular YouTube URLs
-        elif 'youtube.com/watch' in url and 'v=' in url:
-            video_id = re.search(r'v=([^&]+)', url).group(1)
-        else:
-            raise Exception("Could not extract video ID from URL")
-        
-        logger.info(f"Extracted video ID: {video_id}")
-        
-        # Read cookies from file if available
-        cookies_dict = {}
-        if os.path.exists(cookies_path):
-            logger.info(f"Using cookies file: {cookies_path}")
-            try:
-                with open(cookies_path, 'r') as f:
-                    cookie_content = f.read()
-                    # Parse cookies content - this depends on the format of your cookies file
-                    # This is a simplified version assuming Netscape cookie format
-                    for line in cookie_content.split('\n'):
-                        if line and not line.startswith('#'):
-                            fields = line.strip().split('\t')
-                            if len(fields) >= 7:
-                                cookies_dict[fields[5]] = fields[6]
-            except Exception as e:
-                logger.warning(f"Error reading cookies file: {str(e)}")
-        else:
-            logger.warning(f"Cookies file not found at {cookies_path}")
-        
-        # Prepare headers for YouTube Music API request
-        headers = {
-            'User-Agent': user_agent,
-            'Accept': '*/*',
-            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,hi;q=0.7',
-            'Content-Type': 'application/json',
-            'Origin': 'https://music.youtube.com',
-            'Referer': 'https://music.youtube.com/',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-            'X-YouTube-Client-Name': '67',  # YouTube Music client ID
-            'X-YouTube-Client-Version': '1.20250310.01.00',
-            'X-Origin': 'https://music.youtube.com',
-            'X-Goog-Visitor-Id': cookies_dict.get('VISITOR_INFO1_LIVE', ''),
+        # Optimize yt-dlp options for speed
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'user_agent': user_agent,
+            'cookiefile': cookies_path if os.path.exists(cookies_path) else None,
+            'nocheckcertificate': True,
+            'socket_timeout': 8,  # Reduced timeout for faster failure
+            'geo_bypass': True,
+            'extractor_retries': 1,  # Reduced retries for speed
+            'retries': 1,
+            'skip_download': True,
+            'http_headers': {
+                'Accept-Language': 'en-IN,hi-IN;q=0.9,hi;q=0.8,en-US;q=0.7,en;q=0.6',
+                'Referer': 'https://music.youtube.com/',
+            },
         }
         
-        # Add random delay before starting to avoid rate limiting
-        time.sleep(random.uniform(1, 3))
+        # Convert to music.youtube.com URL if needed
+        if 'music.youtube.com' not in url and video_id:
+            url = f"https://music.youtube.com/watch?v={video_id}"
         
-        # Prepare the request payload for YouTube Music API
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "WEB_REMIX",
-                    "clientVersion": "1.20250310.01.00",
-                    "hl": "en",
-                    "gl": "IN",  # Use India as region
-                    "experimentIds": [],
-                    "utcOffsetMinutes": 330,  # India timezone offset
-                    "locationInfo": {
-                        "locationPermissionAuthorizationStatus": "LOCATION_PERMISSION_AUTHORIZATION_STATUS_GRANTED"
-                    },
-                    "musicAppInfo": {
-                        "musicActivityMasterSwitch": "MUSIC_ACTIVITY_MASTER_SWITCH_INDETERMINATE",
-                        "musicLocationMasterSwitch": "MUSIC_LOCATION_MASTER_SWITCH_INDETERMINATE",
-                        "pwaInstallabilityStatus": "PWA_INSTALLABILITY_STATUS_UNKNOWN"
-                    }
-                },
-                "user": {
-                    "lockedSafetyMode": False
-                },
-                "request": {
-                    "useSsl": True,
-                    "internalExperimentFlags": [],
-                    "consistencyTokenJars": []
-                }
-            },
-            "videoId": video_id,
-            "playbackContext": {
-                "contentPlaybackContext": {
-                    "vis": 0,
-                    "splay": False,
-                    "autoCaptionsDefaultOn": False,
-                    "autonavState": "STATE_NONE",
-                    "html5Preference": "HTML5_PREF_WANTS",
-                    "lactMilliseconds": "-1",
-                    "referer": f"https://music.youtube.com/watch?v={video_id}"
-                }
-            },
-            "racyCheckOk": True,
-            "contentCheckOk": True
-        }
-        
-        # Make the direct request to YouTube Music API
-        response = requests.post(
-            "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
-            headers=headers,
-            json=payload,
-            cookies=cookies_dict
-        )
-        
-        # Check if request was successful
-        if response.status_code != 200:
-            logger.error(f"API request failed with status code: {response.status_code}")
-            logger.error(f"Response: {response.text[:200]}...")
-            raise Exception(f"YouTube Music API request failed with status code: {response.status_code}")
-        
-        # Parse the response JSON
-        try:
-            data = response.json()
-        except json.JSONDecodeError:
-            logger.error("Failed to parse API response as JSON")
-            raise Exception("Could not parse YouTube Music API response")
-        
-        # Extract streaming URLs from the response
-        streaming_data = data.get('streamingData', {})
-        
-        # Check for adaptive formats (usually higher quality)
-        adaptive_formats = streaming_data.get('adaptiveFormats', [])
-        
-        # Filter for audio-only formats
-        audio_formats = [
-            fmt for fmt in adaptive_formats 
-            if fmt.get('mimeType', '').startswith('audio/') and 'url' in fmt
-        ]
-        
-        if not audio_formats:
-            logger.warning("No audio-only formats found, checking all formats")
-            # If no audio-only formats, check all formats for audio
-            audio_formats = [
-                fmt for fmt in adaptive_formats 
-                if 'audio' in fmt.get('mimeType', '') and 'url' in fmt
-            ]
-        
-        if audio_formats:
-            # Sort by audio bitrate (highest first)
-            audio_formats.sort(key=lambda x: int(x.get('bitrate', 0)), reverse=True)
+        # Direct extraction attempt
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
             
-            # Get the highest quality audio URL
-            best_audio = audio_formats[0]
-            audio_url = best_audio['url']
-            
-            bitrate = best_audio.get('bitrate', 0) // 1000  # Convert to kbps
-            mime_type = best_audio.get('mimeType', '').split(';')[0]
-            
-            logger.info(f"Selected audio format: {mime_type} @ {bitrate}kbps")
-            
-            # Return the audio stream info
-            return {
-                'url': audio_url,
-                'title': data.get('videoDetails', {}).get('title', 'Unknown Title'),
-                'author': data.get('videoDetails', {}).get('author', 'Unknown Artist'),
-                'thumbnail': data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [{}])[-1].get('url') if data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails') else None,
-                'duration': int(data.get('videoDetails', {}).get('lengthSeconds', 0))
-            }
-        else:
-            # If no audio formats found in adaptive formats, try formats from streaming data
-            formats = streaming_data.get('formats', [])
-            
-            if formats and 'url' in formats[0]:
-                logger.info("Using fallback format")
-                return {
-                    'url': formats[0]['url'],
-                    'title': data.get('videoDetails', {}).get('title', 'Unknown Title'),
-                    'author': data.get('videoDetails', {}).get('author', 'Unknown Artist'),
-                    'thumbnail': data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [{}])[-1].get('url') if data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails') else None,
-                    'duration': int(data.get('videoDetails', {}).get('lengthSeconds', 0))
-                }
-            else:
-                raise Exception("No audio URLs found in the API response")
-    
-    except Exception as e:
-        logger.error(f"Direct API extraction failed: {str(e)}")
-        
-        # Fallback to yt-dlp if available
-        try:
-            import yt_dlp
-            logger.info("Falling back to yt-dlp extraction method")
-            
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'format': 'bestaudio',
-                'geo_bypass': True,
-                'geo_bypass_country': 'IN',
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android_music', 'web_music'],
-                        'compat_opt': ['no-youtube-unavailable-videos']
-                    }
-                },
-                'http_headers': {
-                    'User-Agent': user_agent,
-                    'X-YouTube-Client-Name': '67',  # YouTube Music web client
-                    'X-YouTube-Client-Version': '1.20250310.01.00',
-                    'Origin': 'https://music.youtube.com',
-                    'Referer': 'https://music.youtube.com/'
-                }
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Use video ID for most reliable extraction
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                
-                # Get the URL from the best audio format
-                formats = info.get('formats', [])
-                audio_formats = [f for f in formats if f.get('acodec') != 'none']
-                
+            audio_url = None
+            if 'formats' in info and len(info['formats']) > 0:
+                # Filter for audio-only formats
+                audio_formats = [f for f in info['formats'] if 'audio' in f.get('format', '').lower() and not f.get('resolution')]
                 if audio_formats:
-                    # For YouTube Music, we want the highest audio quality
+                    # Sort by quality (highest first)
                     audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-                    selected_url = audio_formats[0].get('url', '')
+                    audio_url = audio_formats[0]['url']
                 else:
-                    selected_url = info.get('url', '')
+                    audio_url = info.get('url', '')
+            else:
+                audio_url = info.get('url', '')
                 
-                return {
-                    'url': selected_url,
+            # Check if URL is valid
+            if audio_url and is_url_accessible(audio_url):
+                result = {
+                    'url': audio_url,
                     'title': info.get('title', 'Unknown Title'),
                     'author': info.get('uploader', 'Unknown Uploader'),
                     'thumbnail': info.get('thumbnail', None),
-                    'duration': info.get('duration', 0)
+                    'duration': time.time() - start_time
                 }
+                logger.info(f"Direct extraction successful in {result['duration']:.2f} seconds")
+                return result
+            else:
+                logger.warning("Direct audio URL extraction failed or URL not accessible")
                 
-        except ImportError:
-            logger.error("yt-dlp not available for fallback")
-            raise Exception("Failed to extract audio URL from YouTube Music")
-        except Exception as fallback_error:
-            logger.error(f"Fallback extraction failed: {str(fallback_error)}")
-            raise Exception("All extraction methods failed. This track may be region-restricted or require authentication.")
+    except Exception as e:
+        logger.error(f"Direct extraction failed: {str(e)}")
+    
+    # Wait for proxy instances to be fetched if needed
+    if not proxy_future.done():
+        try:
+            # Wait with timeout
+            proxy_instances = proxy_future.result(timeout=3)
+        except Exception as e:
+            logger.warning(f"Error waiting for proxy instances: {str(e)}")
+    
+    # Try proxy fallback
+    try:
+        logger.info("Attempting to extract via proxy method")
+        
+        # Try to get minimal info via ytdlp
+        ydl_opts = {
+            'format': 'bestaudio',
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'skip_download': True,
+            'force_generic_extractor': False
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'Unknown Title')
+            author = info.get('uploader', 'Unknown Uploader')
+            thumbnail = info.get('thumbnail', None)
+            
+            # Try to get an audio URL
+            formats = info.get('formats', [])
+            audio_url = None
+            
+            if formats:
+                audio_formats = [f for f in formats if 'audio' in f.get('format', '').lower()]
+                if audio_formats:
+                    audio_url = audio_formats[0]['url']
+            
+            if not audio_url and info.get('url'):
+                audio_url = info.get('url')
+            
+            # If we have an audio URL but it's not accessible, try proxying
+            if audio_url and not is_url_accessible(audio_url):
+                proxied_url = proxy_url_through_piped(audio_url, video_id, proxy_instances)
+                
+                if proxied_url and is_url_accessible(proxied_url):
+                    result = {
+                        'url': proxied_url, 
+                        'proxied': True,
+                        'original_url': audio_url,
+                        'title': title,
+                        'author': author,
+                        'thumbnail': thumbnail,
+                        'duration': time.time() - start_time
+                    }
+                    logger.info(f"Proxy extraction successful in {result['duration']:.2f} seconds")
+                    return result
+    
+    except Exception as e:
+        logger.error(f"Proxy extraction failed: {str(e)}")
+    
+    # If we reached here, all methods failed
+    logger.error("All extraction methods failed")
+    return {
+        'error': "All extraction methods failed. This track may be heavily restricted.",
+        'duration': time.time() - start_time
+    }

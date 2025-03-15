@@ -1,14 +1,16 @@
 import logging
 import os
-import yt_dlp
+import json
 import random
 import time
+import requests
 import re
+from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
 
 def extract_audio_url(url):
-    """Extract audio stream URL from YouTube Music for India without using proxies"""
+    """Extract audio stream URL from YouTube Music using direct API requests"""
     try:
         # Define the path to the cookies file relative to this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,11 +18,14 @@ def extract_audio_url(url):
         
         # List of diverse user agents to avoid fingerprinting
         user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-            'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+            'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36',
         ]
+        
+        # Select a random user agent
+        user_agent = random.choice(user_agents)
         
         # Extract video ID from various YouTube Music URL formats
         video_id = None
@@ -28,148 +33,229 @@ def extract_audio_url(url):
         # Direct YouTube Music watch URLs
         if 'music.youtube.com/watch' in url and 'v=' in url:
             video_id = re.search(r'v=([^&]+)', url).group(1)
-        # YouTube Music shortened URLs
+        # YouTube Music playlist URLs
         elif 'music.youtube.com/playlist' in url and 'list=' in url:
             playlist_id = re.search(r'list=([^&]+)', url).group(1)
             logger.info(f"YouTube Music playlist detected: {playlist_id}")
-            # For playlists, we'll need to extract the first video ID
-            temp_opts = {
-                'quiet': True,
-                'extract_flat': True,
-                'dump_single_json': True,
-                'skip_download': True,
-            }
-            with yt_dlp.YoutubeDL(temp_opts) as ydl:
-                playlist_info = ydl.extract_info(url, download=False)
-                if 'entries' in playlist_info and len(playlist_info['entries']) > 0:
-                    video_id = playlist_info['entries'][0]['id']
-                    logger.info(f"Extracted first video ID from playlist: {video_id}")
-        # Handle video ID directly for any YouTube URL
+            # For playlists, we'll need to first get the video IDs
+            # This would require a different API call - for now we'll just extract from URL if possible
+            if 'video_id' in url:
+                video_id = re.search(r'video_id=([^&]+)', url).group(1)
+            else:
+                # We'd need separate logic to get first video from playlist
+                # For now, fail gracefully
+                raise Exception("For playlists, please provide a direct video URL from the playlist")
+        # Handle YouTube's shortened URLs
         elif 'youtu.be/' in url:
             video_id = url.split('youtu.be/')[1].split('?')[0]
+        # Regular YouTube URLs
         elif 'youtube.com/watch' in url and 'v=' in url:
             video_id = re.search(r'v=([^&]+)', url).group(1)
-        
-        # If we couldn't extract a video ID, try to use the URL directly
-        if not video_id:
-            logger.warning("Could not extract video ID. Will try to use the URL directly.")
         else:
-            logger.info(f"Extracted video ID: {video_id}")
-            # For YouTube Music, we'll use the regular YouTube URL for extraction
-            # but set the proper headers for YouTube Music
-            url = f"https://www.youtube.com/watch?v={video_id}"
+            raise Exception("Could not extract video ID from URL")
         
-        # Configure yt-dlp options with YouTube Music specific settings
-        ydl_opts = {
-            # Prefer audio formats with best quality
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-            'user_agent': random.choice(user_agents),
-            'cookiefile': cookies_path if os.path.exists(cookies_path) else None,
-            'nocheckcertificate': True,
-            'socket_timeout': 60,
-            'geo_bypass': True,
-            'geo_bypass_country': 'IN',
-            'extractor_retries': 10,
-            'retries': 15,
-            'fragment_retries': 15,
-            'skip_download': True,
-            'noplaylist': True,  # Avoid playlist expansion
-            'http_headers': {
-                'Accept-Language': 'en-IN,hi-IN;q=0.9,hi;q=0.8,en-US;q=0.7,en;q=0.6',
-                'Accept': '*/*',
-                'Referer': 'https://music.youtube.com/',
-                'Origin': 'https://music.youtube.com',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-site',
-                'X-YouTube-Client-Name': '67',  # YouTube Music client ID
-                'X-YouTube-Client-Version': '1.20240301.00.00',
-                'DNT': '1',
-            },
-            'youtube_include_dash_manifest': True,
-            'youtube_include_hls_manifest': True,
-        }
+        logger.info(f"Extracted video ID: {video_id}")
         
+        # Read cookies from file if available
+        cookies_dict = {}
         if os.path.exists(cookies_path):
             logger.info(f"Using cookies file: {cookies_path}")
+            try:
+                with open(cookies_path, 'r') as f:
+                    cookie_content = f.read()
+                    # Parse cookies content - this depends on the format of your cookies file
+                    # This is a simplified version assuming Netscape cookie format
+                    for line in cookie_content.split('\n'):
+                        if line and not line.startswith('#'):
+                            fields = line.strip().split('\t')
+                            if len(fields) >= 7:
+                                cookies_dict[fields[5]] = fields[6]
+            except Exception as e:
+                logger.warning(f"Error reading cookies file: {str(e)}")
         else:
             logger.warning(f"Cookies file not found at {cookies_path}")
+        
+        # Prepare headers for YouTube Music API request
+        headers = {
+            'User-Agent': user_agent,
+            'Accept': '*/*',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,hi;q=0.7',
+            'Content-Type': 'application/json',
+            'Origin': 'https://music.youtube.com',
+            'Referer': 'https://music.youtube.com/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'X-YouTube-Client-Name': '67',  # YouTube Music client ID
+            'X-YouTube-Client-Version': '1.20250310.01.00',
+            'X-Origin': 'https://music.youtube.com',
+            'X-Goog-Visitor-Id': cookies_dict.get('VISITOR_INFO1_LIVE', ''),
+        }
         
         # Add random delay before starting to avoid rate limiting
         time.sleep(random.uniform(1, 3))
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # First try with standard YouTube extraction - this works better for YouTube Music
-            info = ydl.extract_info(url, download=False)
-            
-            # Get available formats
-            formats = info.get('formats', [])
-            
-            # First try to get a pure audio format
-            audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
-            
-            if audio_formats:
-                # Sort by quality (audio bitrate)
-                audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-                selected_format = audio_formats[0]
-                selected_url = selected_format.get('url', '')
-                logger.info(f"Selected audio format: {selected_format.get('format_id')} - {selected_format.get('abr')}kbps")
-            else:
-                # If no pure audio, get format with audio
-                formats_with_audio = [f for f in formats if f.get('acodec') != 'none']
-                if formats_with_audio:
-                    # Sort by audio quality
-                    formats_with_audio.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-                    selected_format = formats_with_audio[0]
-                    selected_url = selected_format.get('url', '')
-                    logger.info(f"No pure audio format available. Selected mixed format: {selected_format.get('format_id')}")
-                else:
-                    # Fallback to default
-                    selected_url = info.get('url', '')
-                    logger.warning("No format with audio found. Using default URL.")
-            
-            # Check if URL is valid
-            if not selected_url:
-                raise Exception("Failed to extract a valid audio URL")
-            
-            return {
-                'url': selected_url,
-                'title': info.get('title', 'Unknown Title'),
-                'author': info.get('uploader', 'Unknown Uploader'),
-                'thumbnail': info.get('thumbnail', None),
-                'duration': info.get('duration', 0)
-            }
-                
-    except Exception as e:
-        logger.error(f"Standard extraction failed: {str(e)}")
+        # Prepare the request payload for YouTube Music API
+        payload = {
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": "1.20250310.01.00",
+                    "hl": "en",
+                    "gl": "IN",  # Use India as region
+                    "experimentIds": [],
+                    "utcOffsetMinutes": 330,  # India timezone offset
+                    "locationInfo": {
+                        "locationPermissionAuthorizationStatus": "LOCATION_PERMISSION_AUTHORIZATION_STATUS_GRANTED"
+                    },
+                    "musicAppInfo": {
+                        "musicActivityMasterSwitch": "MUSIC_ACTIVITY_MASTER_SWITCH_INDETERMINATE",
+                        "musicLocationMasterSwitch": "MUSIC_LOCATION_MASTER_SWITCH_INDETERMINATE",
+                        "pwaInstallabilityStatus": "PWA_INSTALLABILITY_STATUS_UNKNOWN"
+                    }
+                },
+                "user": {
+                    "lockedSafetyMode": False
+                },
+                "request": {
+                    "useSsl": True,
+                    "internalExperimentFlags": [],
+                    "consistencyTokenJars": []
+                }
+            },
+            "videoId": video_id,
+            "playbackContext": {
+                "contentPlaybackContext": {
+                    "vis": 0,
+                    "splay": False,
+                    "autoCaptionsDefaultOn": False,
+                    "autonavState": "STATE_NONE",
+                    "html5Preference": "HTML5_PREF_WANTS",
+                    "lactMilliseconds": "-1",
+                    "referer": f"https://music.youtube.com/watch?v={video_id}"
+                }
+            },
+            "racyCheckOk": True,
+            "contentCheckOk": True
+        }
         
-        # If standard extraction fails, try with YouTube Music specific format selectors
+        # Make the direct request to YouTube Music API
+        response = requests.post(
+            "https://music.youtube.com/youtubei/v1/player?prettyPrint=false",
+            headers=headers,
+            json=payload,
+            cookies=cookies_dict
+        )
+        
+        # Check if request was successful
+        if response.status_code != 200:
+            logger.error(f"API request failed with status code: {response.status_code}")
+            logger.error(f"Response: {response.text[:200]}...")
+            raise Exception(f"YouTube Music API request failed with status code: {response.status_code}")
+        
+        # Parse the response JSON
         try:
-            logger.info("Attempting extraction with YouTube Music specific options...")
+            data = response.json()
+        except json.JSONDecodeError:
+            logger.error("Failed to parse API response as JSON")
+            raise Exception("Could not parse YouTube Music API response")
+        
+        # Extract streaming URLs from the response
+        streaming_data = data.get('streamingData', {})
+        
+        # Check for adaptive formats (usually higher quality)
+        adaptive_formats = streaming_data.get('adaptiveFormats', [])
+        
+        # Filter for audio-only formats
+        audio_formats = [
+            fmt for fmt in adaptive_formats 
+            if fmt.get('mimeType', '').startswith('audio/') and 'url' in fmt
+        ]
+        
+        if not audio_formats:
+            logger.warning("No audio-only formats found, checking all formats")
+            # If no audio-only formats, check all formats for audio
+            audio_formats = [
+                fmt for fmt in adaptive_formats 
+                if 'audio' in fmt.get('mimeType', '') and 'url' in fmt
+            ]
+        
+        if audio_formats:
+            # Sort by audio bitrate (highest first)
+            audio_formats.sort(key=lambda x: int(x.get('bitrate', 0)), reverse=True)
             
-            # YouTube Music specific approach
-            ydl_opts['format'] = 'bestaudio[acodec=opus]/bestaudio'
-            ydl_opts['youtube_include_dash_manifest'] = True
-            ydl_opts['extractor_args'] = {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage', 'configs'],
-                    'compat_opt': ['no-youtube-unavailable-videos']
+            # Get the highest quality audio URL
+            best_audio = audio_formats[0]
+            audio_url = best_audio['url']
+            
+            bitrate = best_audio.get('bitrate', 0) // 1000  # Convert to kbps
+            mime_type = best_audio.get('mimeType', '').split(';')[0]
+            
+            logger.info(f"Selected audio format: {mime_type} @ {bitrate}kbps")
+            
+            # Return the audio stream info
+            return {
+                'url': audio_url,
+                'title': data.get('videoDetails', {}).get('title', 'Unknown Title'),
+                'author': data.get('videoDetails', {}).get('author', 'Unknown Artist'),
+                'thumbnail': data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [{}])[-1].get('url') if data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails') else None,
+                'duration': int(data.get('videoDetails', {}).get('lengthSeconds', 0))
+            }
+        else:
+            # If no audio formats found in adaptive formats, try formats from streaming data
+            formats = streaming_data.get('formats', [])
+            
+            if formats and 'url' in formats[0]:
+                logger.info("Using fallback format")
+                return {
+                    'url': formats[0]['url'],
+                    'title': data.get('videoDetails', {}).get('title', 'Unknown Title'),
+                    'author': data.get('videoDetails', {}).get('author', 'Unknown Artist'),
+                    'thumbnail': data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails', [{}])[-1].get('url') if data.get('videoDetails', {}).get('thumbnail', {}).get('thumbnails') else None,
+                    'duration': int(data.get('videoDetails', {}).get('lengthSeconds', 0))
+                }
+            else:
+                raise Exception("No audio URLs found in the API response")
+    
+    except Exception as e:
+        logger.error(f"Direct API extraction failed: {str(e)}")
+        
+        # Fallback to yt-dlp if available
+        try:
+            import yt_dlp
+            logger.info("Falling back to yt-dlp extraction method")
+            
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'format': 'bestaudio',
+                'geo_bypass': True,
+                'geo_bypass_country': 'IN',
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android_music', 'web_music'],
+                        'compat_opt': ['no-youtube-unavailable-videos']
+                    }
+                },
+                'http_headers': {
+                    'User-Agent': user_agent,
+                    'X-YouTube-Client-Name': '67',  # YouTube Music web client
+                    'X-YouTube-Client-Version': '1.20250310.01.00',
+                    'Origin': 'https://music.youtube.com',
+                    'Referer': 'https://music.youtube.com/'
                 }
             }
             
-            # Sometimes using a different extractor helps
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+                # Use video ID for most reliable extraction
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
                 
-                # Get the best audio URL
+                # Get the URL from the best audio format
                 formats = info.get('formats', [])
                 audio_formats = [f for f in formats if f.get('acodec') != 'none']
                 
                 if audio_formats:
-                    # Sort by audio quality
+                    # For YouTube Music, we want the highest audio quality
                     audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
                     selected_url = audio_formats[0].get('url', '')
                 else:
@@ -182,59 +268,10 @@ def extract_audio_url(url):
                     'thumbnail': info.get('thumbnail', None),
                     'duration': info.get('duration', 0)
                 }
-        except Exception as second_error:
-            logger.error(f"YouTube Music specific extraction failed: {str(second_error)}")
-            
-            # Last resort - use a completely different approach
-            try:
-                logger.info("Attempting final extraction method for YouTube Music...")
                 
-                # For the final attempt, we'll use YouTube's innertube API which YouTube Music also uses
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'format': 'bestaudio',
-                    'user_agent': random.choice(user_agents),
-                    'cookiefile': cookies_path if os.path.exists(cookies_path) else None,
-                    'skip_download': True,
-                    'extractor_args': {
-                        'youtube': {
-                            'player_client': ['android_music', 'web_music'],
-                            'compat_opt': ['no-youtube-unavailable-videos']
-                        }
-                    },
-                    'http_headers': {
-                        'Accept-Language': 'en-IN,hi-IN;q=0.9,hi;q=0.8,en-US;q=0.7,en;q=0.6',
-                        'X-YouTube-Client-Name': '67',  # YouTube Music web client
-                        'X-YouTube-Client-Version': '1.20240301.00.00'
-                    }
-                }
-                
-                # Create a fresh URL that will definitely work with YouTube's backend
-                if video_id:
-                    url = f"https://www.youtube.com/watch?v={video_id}"
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    
-                    # Get the URL from the best audio format
-                    formats = info.get('formats', [])
-                    audio_formats = [f for f in formats if f.get('acodec') != 'none']
-                    
-                    if audio_formats:
-                        # For YouTube Music, we want the highest audio quality
-                        audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
-                        selected_url = audio_formats[0].get('url', '')
-                    else:
-                        selected_url = info.get('url', '')
-                    
-                    return {
-                        'url': selected_url,
-                        'title': info.get('title', 'Unknown Title'),
-                        'author': info.get('uploader', 'Unknown Uploader'),
-                        'thumbnail': info.get('thumbnail', None),
-                        'duration': info.get('duration', 0)
-                    }
-            except Exception as third_error:
-                logger.error(f"All extraction methods failed: {str(third_error)}")
-                raise Exception(f"Could not extract audio from YouTube Music. This track may be region-restricted or require authentication.")
+        except ImportError:
+            logger.error("yt-dlp not available for fallback")
+            raise Exception("Failed to extract audio URL from YouTube Music")
+        except Exception as fallback_error:
+            logger.error(f"Fallback extraction failed: {str(fallback_error)}")
+            raise Exception("All extraction methods failed. This track may be region-restricted or require authentication.")

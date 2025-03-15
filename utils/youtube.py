@@ -31,7 +31,7 @@ def extract_audio_url(url):
             'nocheckcertificate': True,
             'socket_timeout': 30,
             'geo_bypass': True,  # Add geo bypass option
-            'geo_bypass_country': 'US',  # Specify country for geo bypass
+            'geo_bypass_country': 'IN',  # Specify country for geo bypass
             'extractor_retries': 3,  # Retry extraction multiple times
             'source_address': '0.0.0.0',  # Use any available network interface
         }

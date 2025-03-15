@@ -7,7 +7,7 @@ import time
 logger = logging.getLogger(__name__)
 
 def extract_audio_url(url):
-    """Extract audio stream URL from YouTube video for India without using proxies"""
+    """Extract audio stream URL from YouTube Music for India without using proxies"""
     try:
         # Define the path to the cookies file relative to this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -41,8 +41,8 @@ def extract_audio_url(url):
             'http_headers': {
                 'Accept-Language': 'en-IN,hi-IN;q=0.9,hi;q=0.8,en-US;q=0.7,en;q=0.6',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Referer': 'https://www.youtube.com/',
-                'Origin': 'https://www.youtube.com',
+                'Referer': 'https://music.youtube.com/',
+                'Origin': 'https://music.youtube.com',
                 'Sec-Fetch-Dest': 'audio',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'cross-site',
@@ -60,6 +60,20 @@ def extract_audio_url(url):
         
         # Add random delay before starting
         time.sleep(random.uniform(1, 3))
+        
+        # Check if the URL is already a music.youtube.com URL
+        if 'music.youtube.com' not in url:
+            # Try to convert regular YouTube URL to YouTube Music URL if possible
+            if 'youtube.com/watch' in url and 'v=' in url:
+                video_id = url.split('v=')[1].split('&')[0]
+                url = f"https://music.youtube.com/watch?v={video_id}"
+                logger.info(f"Converted to YouTube Music URL: {url}")
+            elif 'youtu.be/' in url:
+                video_id = url.split('youtu.be/')[1].split('?')[0]
+                url = f"https://music.youtube.com/watch?v={video_id}"
+                logger.info(f"Converted to YouTube Music URL: {url}")
+            else:
+                logger.warning("Could not convert to YouTube Music URL format. Using original URL.")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # First try with normal extraction
@@ -128,7 +142,7 @@ def extract_audio_url(url):
                 ydl_opts['youtube_include_dash_manifest'] = False
                 
                 # Construct embed URL which may have different restrictions
-                if 'youtube.com' in url or 'youtu.be' in url:
+                if 'music.youtube.com' in url or 'youtube.com' in url or 'youtu.be' in url:
                     video_id = None
                     if 'v=' in url:
                         video_id = url.split('v=')[1].split('&')[0]
@@ -136,8 +150,9 @@ def extract_audio_url(url):
                         video_id = url.split('youtu.be/')[1].split('?')[0]
                     
                     if video_id:
-                        embed_url = f"https://www.youtube.com/embed/{video_id}"
-                        logger.info(f"Trying embed URL: {embed_url}")
+                        # Try YouTube Music embedding if possible
+                        embed_url = f"https://music.youtube.com/embed/{video_id}"
+                        logger.info(f"Trying YouTube Music embed URL: {embed_url}")
                         
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             info = ydl.extract_info(embed_url, download=False)
@@ -150,4 +165,4 @@ def extract_audio_url(url):
                 
                 raise Exception("Failed to extract with embed method")
             except:
-                raise Exception(f"All extraction methods failed. This video may be heavily restricted in your region.")
+                raise Exception(f"All extraction methods failed. This track may be heavily restricted in your region.")

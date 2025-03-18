@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "repl-nix-workspace"
+version = "0.1.0"
+description = "Add your description here"
+authors = ["Your Name <youremail@example.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+email-validator = ">=2.2.0"
+flask = ">=3.1.0"
+flask-sqlalchemy = ">=3.1.1"
+gunicorn = ">=23.0.0"
+psycopg2-binary = ">=2.9.10"
+pytube = ">=15.0.0"
+yt-dlp = ">=2025.2.19"
+google-auth = ">=2.6.0"
+google-auth-oauthlib = ">=0.4.6"
+google-auth-httplib2 = ">=0.1.0"
+
+[tool.poetry.dev-dependencies]
+# Add any development dependencies here

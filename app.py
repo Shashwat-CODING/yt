@@ -2,6 +2,7 @@ import os
 import logging
 import re
 import requests
+from urllib.parse import unquote
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 from utils.youtube import extract_audio_url
 
@@ -40,21 +41,29 @@ def extract():
             # Store original URL
             audio_data['original_url'] = audio_data['url']
             # Create proxy URL (uncomment if you want automatic proxy redirection)
-            # audio_data['url'] = f"/proxy/{audio_data['url']}"
+            # audio_data['url'] = f"/proxy?url={audio_data['url']}"
         return jsonify(audio_data)
     except Exception as e:
         logger.error(f"Error extracting audio: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/proxy/<path:audio_url>', methods=['GET'])
-def proxy_audio(audio_url):
+@app.route('/proxy', methods=['GET'])
+def proxy_audio():
     """
-    Proxy endpoint that fetches the audio stream from the provided URL
+    Proxy endpoint that fetches the audio stream from the provided URL parameter
     and forwards it to the client using the server's IP address.
     
-    Usage: /proxy/https://example.com/audio-stream.mp3
+    Usage: /proxy?url=https://example.com/audio-stream.mp3
     """
     try:
+        # Get URL from query parameter
+        audio_url = request.args.get('url')
+        if not audio_url:
+            return jsonify({"error": "Missing URL parameter"}), 400
+        
+        # Ensure URL is properly decoded
+        audio_url = unquote(audio_url)
+        
         # Log the proxy request
         logger.info(f"Proxying request for: {audio_url}")
         
@@ -81,9 +90,12 @@ def proxy_audio(audio_url):
         # Prepare response headers
         response_headers = {
             'Content-Type': req.headers.get('Content-Type', 'application/octet-stream'),
-            'Content-Length': req.headers.get('Content-Length', ''),
             'Accept-Ranges': req.headers.get('Accept-Ranges', 'bytes'),
         }
+        
+        # Add Content-Length if it exists in the response
+        if 'Content-Length' in req.headers:
+            response_headers['Content-Length'] = req.headers['Content-Length']
         
         # Add Content-Range header if it exists in the response
         if 'Content-Range' in req.headers:
@@ -99,6 +111,14 @@ def proxy_audio(audio_url):
     except Exception as e:
         logger.error(f"Proxy error: {str(e)}")
         return jsonify({"error": f"Proxy error: {str(e)}"}), 500
+
+# Keep the path-based proxy for backward compatibility
+@app.route('/proxy/<path:audio_url>', methods=['GET'])
+def proxy_audio_path(audio_url):
+    """
+    Legacy path-based proxy endpoint that redirects to the query parameter version
+    """
+    return proxy_audio()
 
 @app.errorhandler(404)
 def not_found_error(error):

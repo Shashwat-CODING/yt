@@ -2,7 +2,6 @@ name: Generate YouTube Cookies
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # Runs every 3 hours
   workflow_dispatch:  # Also allows manual triggering
 
 # Add this permissions block

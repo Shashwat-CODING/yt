@@ -1,10 +1,11 @@
-name: Test Proxies
+\name: Test Proxies
 
 on:
   schedule:
     - cron: '*/15 * * * *'  # Run every 15 minutes
   workflow_dispatch:        # Allow manual triggering
 
+# Add explicit permissions to allow pushing to the repository
 permissions:
   contents: write
 

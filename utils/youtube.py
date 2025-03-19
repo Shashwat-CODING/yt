@@ -3,7 +3,8 @@ import os
 import json
 import yt_dlp
 import requests
-import random
+import subprocess
+import shlex
 
 logger = logging.getLogger(__name__)
 
@@ -44,30 +45,28 @@ def extract_audio_url(url):
             proxies = []
             logger.warning(f"Error fetching proxies: {str(e)}")
         
-        # Try each proxy
+        # Check if cookies file exists
+        cookies_path = os.path.join(current_dir, 'cookies.txt')
+        cookies_arg = f"--cookies {shlex.quote(cookies_path)}" if os.path.exists(cookies_path) else ""
+        logger.info(f"Cookies path: {cookies_path}, exists: {os.path.exists(cookies_path)}")
+        
+        # Try each proxy using the exact command-line approach that works
         last_error = None
         for proxy in proxies:
             try:
-                # Format proxy URL correctly for yt-dlp
                 proxy_url = f"http://{proxy}"
-                logger.info(f"Trying with proxy: {proxy_url}")
                 
+                # First attempt: Use yt-dlp Python API with exact same parameters
+                logger.info(f"Trying with proxy via Python API: {proxy_url}")
                 ydl_opts = {
-                    'format': 'bestaudio/best',
+                    'format': 'bestaudio',
                     'quiet': True,
                     'no_warnings': True,
                     'extract_flat': False,
-                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'client_secrets': client_secrets_file,
-                    'proxy': proxy_url,  # Direct proxy configuration
-                    'geo_bypass': True,
-                    'geo_bypass_country': 'IN',
+                    'proxy': proxy_url,
                 }
                 
-                # Fallback to cookies if available
-                cookies_path = os.path.join(current_dir, 'cookies.txt')
                 if os.path.exists(cookies_path):
-                    logger.info(f"Found cookies file, using as fallback: {cookies_path}")
                     ydl_opts['cookiefile'] = cookies_path
                 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -80,36 +79,67 @@ def extract_audio_url(url):
                         'thumbnail': info['thumbnail']
                     }
             except Exception as e:
-                last_error = e
-                logger.warning(f"Failed with proxy {proxy}: {str(e)}")
-                continue
+                # If Python API fails, try subprocess approach (exactly matching your working command)
+                logger.warning(f"Failed with proxy {proxy} via Python API: {str(e)}")
+                try:
+                    logger.info(f"Trying with proxy via subprocess: {proxy_url}")
+                    cmd = f"yt-dlp --proxy {shlex.quote(proxy_url)} {cookies_arg} -f bestaudio --dump-json {shlex.quote(url)}"
+                    logger.info(f"Running command: {cmd}")
+                    
+                    result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+                    if result.stdout:
+                        info = json.loads(result.stdout)
+                        logger.info(f"Successfully extracted with proxy via subprocess: {proxy_url}")
+                        return {
+                            'url': info.get('url', ''),
+                            'title': info.get('title', ''),
+                            'author': info.get('uploader', ''),
+                            'thumbnail': info.get('thumbnail', '')
+                        }
+                except Exception as sub_e:
+                    logger.warning(f"Failed with proxy {proxy} via subprocess: {str(sub_e)}")
+                    last_error = sub_e
+                    continue
         
         # If all proxies fail, try without proxy
         logger.info("All proxies failed or none available, trying without proxy")
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'client_secrets': client_secrets_file,
-            'geo_bypass': True,
-            'geo_bypass_country': 'IN',
-        }
-        
-        # Fallback to cookies if available
-        cookies_path = os.path.join(current_dir, 'cookies.txt')
-        if os.path.exists(cookies_path):
-            ydl_opts['cookiefile'] = cookies_path
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return {
-                'url': info['url'],
-                'title': info['title'],
-                'author': info['uploader'],
-                'thumbnail': info['thumbnail']
+        try:
+            ydl_opts = {
+                'format': 'bestaudio',
+                'quiet': True,
+                'no_warnings': True,
             }
+            
+            if os.path.exists(cookies_path):
+                ydl_opts['cookiefile'] = cookies_path
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return {
+                    'url': info['url'],
+                    'title': info['title'],
+                    'author': info['uploader'],
+                    'thumbnail': info['thumbnail']
+                }
+        except Exception as e:
+            # Final fallback: try subprocess without proxy
+            logger.warning(f"Failed without proxy via Python API: {str(e)}")
+            try:
+                cmd = f"yt-dlp {cookies_arg} -f bestaudio --dump-json {shlex.quote(url)}"
+                logger.info(f"Running final command without proxy: {cmd}")
+                
+                result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+                if result.stdout:
+                    info = json.loads(result.stdout)
+                    return {
+                        'url': info.get('url', ''),
+                        'title': info.get('title', ''),
+                        'author': info.get('uploader', ''),
+                        'thumbnail': info.get('thumbnail', '')
+                    }
+            except Exception as sub_e:
+                logger.error(f"All extraction attempts failed: {str(sub_e)}")
+                raise Exception(f"Failed to extract audio: {str(sub_e)}")
             
     except Exception as e:
         logger.error(f"yt-dlp extraction failed: {str(e)}")

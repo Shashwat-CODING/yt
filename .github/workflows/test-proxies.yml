@@ -1,4 +1,4 @@
-\name: Test Proxies
+name: Test Proxies
 
 on:
   schedule:

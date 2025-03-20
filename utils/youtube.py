@@ -33,7 +33,7 @@ def extract_audio_url(url):
         
         # Get proxies from the dynamic JSON
         try:
-            response = requests.get("https://raw.githubusercontent.com/Shashwat-CODING/yt/refs/heads/main/wpr.json")
+            response = requests.get("https://github.com/Shashwat-CODING/story/raw/refs/heads/main/wpr.json")
             if response.status_code == 200:
                 proxy_data = response.json()
                 proxies = proxy_data.get('proxies', [])

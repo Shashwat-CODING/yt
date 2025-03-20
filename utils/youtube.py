@@ -70,6 +70,7 @@ def extract_with_yt_dlp_api(url: str, proxy: Optional[str] = None, cookies_path:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
+        'socket_timeout': 10,  # Add timeout parameter
     }
     
     if proxy:
@@ -97,13 +98,14 @@ def extract_with_subprocess(url: str, proxy: Optional[str] = None, cookies_path:
     if cookies_path:
         cmd_parts.extend(["--cookies", cookies_path])
     
-    cmd_parts.extend(["-f", "bestaudio", "--dump-json", url])
+    cmd_parts.extend(["--socket-timeout", "10", "-f", "bestaudio", "--dump-json", url])
     
     # Convert command parts to a safe shell command string
     cmd = " ".join(shlex.quote(str(part)) for part in cmd_parts)
     logger.info(f"Running command: {cmd}")
     
-    result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+    # Add timeout to subprocess call
+    result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=30)
     if result.stdout:
         info = json.loads(result.stdout)
         return {
@@ -127,12 +129,18 @@ def extract_audio_url(url: str) -> Dict[str, Any]:
             try:
                 logger.info(f"Trying with proxy via Python API: {proxy}")
                 return extract_with_yt_dlp_api(url, proxy, cookies_path)
+            except requests.exceptions.Timeout:
+                logger.warning(f"Timeout with proxy {proxy} via Python API")
+                continue  # Skip to next proxy on timeout
             except Exception as e:
                 logger.warning(f"Failed with proxy {proxy} via Python API: {str(e)}")
                 
                 try:
                     logger.info(f"Trying with proxy via subprocess: {proxy}")
                     return extract_with_subprocess(url, proxy, cookies_path)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Timeout with proxy {proxy} via subprocess")
+                    continue  # Skip to next proxy on timeout
                 except Exception as sub_e:
                     logger.warning(f"Failed with proxy {proxy} via subprocess: {str(sub_e)}")
                     continue

@@ -56,7 +56,7 @@ def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
         proxies = []
         try:
             response = requests.get(
-                "https://github.com/Shashwat-CODING/story/raw/refs/heads/main/wpr.json", 
+                "https://backendmix.vercel.app/ips", 
                 timeout=5
             )
             if response.status_code == 200:

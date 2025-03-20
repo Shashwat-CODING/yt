@@ -5,7 +5,9 @@ import yt_dlp
 import requests
 import subprocess
 import shlex
+import socket
 from typing import Dict, List, Optional, Any
+from urllib3.exceptions import ReadTimeoutError, ConnectTimeoutError
 
 # Configure logging
 logging.basicConfig(
@@ -13,6 +15,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Set a shorter timeout than Gunicorn's worker timeout (typically 30 seconds)
+# This ensures our operations fail before Gunicorn kills the worker
+YT_DLP_TIMEOUT = 15  # seconds for yt-dlp operations
+SUBPROCESS_TIMEOUT = 15  # seconds for subprocess operations
+REQUESTS_TIMEOUT = 8  # seconds for HTTP requests
 
 def get_client_secrets_file() -> str:
     """Create and return path to client secrets file."""
@@ -40,7 +48,7 @@ def get_client_secrets_file() -> str:
 def fetch_proxies() -> List[str]:
     """Fetch proxy list from API endpoint."""
     try:
-        response = requests.get("https://backendmix.vercel.app/ips", timeout=10)
+        response = requests.get("https://backendmix.vercel.app/ips", timeout=REQUESTS_TIMEOUT)
         if response.status_code == 200:
             proxy_data = response.json()
             proxies = proxy_data.get('proxies', [])
@@ -70,7 +78,7 @@ def extract_with_yt_dlp_api(url: str, proxy: Optional[str] = None, cookies_path:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'socket_timeout': 10,  # Add timeout parameter
+        'socket_timeout': YT_DLP_TIMEOUT,  # Set a shorter timeout than Gunicorn's worker timeout
     }
     
     if proxy:
@@ -79,14 +87,22 @@ def extract_with_yt_dlp_api(url: str, proxy: Optional[str] = None, cookies_path:
     if cookies_path:
         ydl_opts['cookiefile'] = cookies_path
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return {
-            'url': info['url'],
-            'title': info['title'],
-            'author': info.get('uploader', 'Unknown'),
-            'thumbnail': info.get('thumbnail', '')
-        }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return {
+                'url': info['url'],
+                'title': info['title'],
+                'author': info.get('uploader', 'Unknown'),
+                'thumbnail': info.get('thumbnail', '')
+            }
+    except (socket.timeout, ReadTimeoutError, ConnectTimeoutError) as e:
+        # Convert socket timeouts to our own timeout exception
+        logger.warning(f"Socket timeout with yt-dlp API: {str(e)}")
+        raise requests.exceptions.Timeout(f"Socket timeout with yt-dlp API: {str(e)}")
+    except Exception as e:
+        # Re-raise any other exceptions
+        raise
 
 def extract_with_subprocess(url: str, proxy: Optional[str] = None, cookies_path: Optional[str] = None) -> Dict[str, Any]:
     """Extract audio info using yt-dlp via subprocess."""
@@ -98,23 +114,27 @@ def extract_with_subprocess(url: str, proxy: Optional[str] = None, cookies_path:
     if cookies_path:
         cmd_parts.extend(["--cookies", cookies_path])
     
-    cmd_parts.extend(["--socket-timeout", "10", "-f", "bestaudio", "--dump-json", url])
+    cmd_parts.extend([f"--socket-timeout", f"{YT_DLP_TIMEOUT}", "-f", "bestaudio", "--dump-json", url])
     
     # Convert command parts to a safe shell command string
     cmd = " ".join(shlex.quote(str(part)) for part in cmd_parts)
     logger.info(f"Running command: {cmd}")
     
     # Add timeout to subprocess call
-    result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=30)
-    if result.stdout:
-        info = json.loads(result.stdout)
-        return {
-            'url': info.get('url', ''),
-            'title': info.get('title', ''),
-            'author': info.get('uploader', 'Unknown'),
-            'thumbnail': info.get('thumbnail', '')
-        }
-    raise Exception("Empty response from yt-dlp subprocess")
+    try:
+        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
+        if result.stdout:
+            info = json.loads(result.stdout)
+            return {
+                'url': info.get('url', ''),
+                'title': info.get('title', ''),
+                'author': info.get('uploader', 'Unknown'),
+                'thumbnail': info.get('thumbnail', '')
+            }
+        raise Exception("Empty response from yt-dlp subprocess")
+    except subprocess.TimeoutExpired as e:
+        logger.warning(f"Subprocess timeout: {str(e)}")
+        raise
 
 def extract_audio_url(url: str) -> Dict[str, Any]:
     """Extract audio stream URL from YouTube video using yt-dlp with proxy fallback."""
@@ -126,15 +146,17 @@ def extract_audio_url(url: str) -> Dict[str, Any]:
     # Try with each proxy
     if proxies:
         for proxy in proxies:
+            # First try with Python API
             try:
                 logger.info(f"Trying with proxy via Python API: {proxy}")
                 return extract_with_yt_dlp_api(url, proxy, cookies_path)
-            except requests.exceptions.Timeout:
+            except (requests.exceptions.Timeout, ReadTimeoutError, ConnectTimeoutError, socket.timeout):
                 logger.warning(f"Timeout with proxy {proxy} via Python API")
                 continue  # Skip to next proxy on timeout
             except Exception as e:
                 logger.warning(f"Failed with proxy {proxy} via Python API: {str(e)}")
                 
+                # If Python API fails with non-timeout error, try subprocess
                 try:
                     logger.info(f"Trying with proxy via subprocess: {proxy}")
                     return extract_with_subprocess(url, proxy, cookies_path)

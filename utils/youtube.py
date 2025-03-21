@@ -2,12 +2,11 @@ import os
 import json
 import logging
 import yt_dlp
-from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 def extract_audio_url(url):
-    """Extract audio stream URL from YouTube video using yt-dlp with OAuth authentication and geo-location bypass for India"""
+    """Extract audio stream URL from YouTube video using yt-dlp with OAuth authentication"""
     try:
         # Define the path to the client secrets file relative to this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -29,22 +28,7 @@ def extract_audio_url(url):
                 json.dump(oauth_info, f)
             logger.info(f"Created client_secrets.json at {client_secrets_file}")
         
-        # Multiple Indian IP addresses to try if one fails
-        indian_ips = [
-            '103.31.38.0',  # Mumbai
-            '125.19.52.0',   # Delhi
-            '202.53.92.0',   # Bangalore
-            '117.197.40.0'   # Chennai
-        ]
-        
-        # Headers that help bypass geo-restrictions
-        headers = {
-            'Accept-Language': 'hi-IN,hi;q=0.9,en-IN;q=0.8,en;q=0.7',
-            'X-Forwarded-For': indian_ips[0],
-            'CF-IPCountry': 'IN'
-        }
-        
-        # Configure yt-dlp options with enhanced geo-location settings
+        # Configure yt-dlp options
         ydl_opts = {
             'format': 'bestaudio/best',
             'quiet': True,
@@ -52,9 +36,6 @@ def extract_audio_url(url):
             'extract_flat': False,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'client_secrets': client_secrets_file,
-            'geo_bypass_country': 'IN',  # Set geo-location to India
-            'geo_bypass': True,
-            'http_headers': headers,
             'socket_timeout': 15,
             'retries': 5
         }
@@ -65,10 +46,10 @@ def extract_audio_url(url):
             logger.info(f"Found cookies file, using as fallback: {cookies_path}")
             ydl_opts['cookiefile'] = cookies_path
         
-        # Try with the first configuration
+        # Extract info
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logger.info(f"Attempting to extract info with primary settings")
+                logger.info(f"Attempting to extract info")
                 info = ydl.extract_info(url, download=False)
                 logger.info(f"Successfully extracted info for {url}")
                 return {
@@ -77,32 +58,9 @@ def extract_audio_url(url):
                     'author': info['uploader'],
                     'thumbnail': info['thumbnail']
                 }
-        except Exception as first_error:
-            logger.warning(f"First extraction attempt failed: {str(first_error)}")
-            
-            # Try alternate IPs if the first one fails
-            success = False
-            for ip in indian_ips[1:]:
-                try:
-                    logger.info(f"Retrying with alternate Indian IP: {ip}")
-                    ydl_opts['http_headers']['X-Forwarded-For'] = ip
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        logger.info(f"Successfully extracted info using IP {ip}")
-                        success = True
-                        return {
-                            'url': info['url'],
-                            'title': info['title'],
-                            'author': info['uploader'],
-                            'thumbnail': info['thumbnail']
-                        }
-                except Exception as retry_error:
-                    logger.warning(f"Extraction with IP {ip} failed: {str(retry_error)}")
-                    continue
-            
-            if not success:
-                logger.error("All extraction attempts failed")
-                raise Exception("Failed to extract audio after trying multiple Indian IPs")
+        except Exception as e:
+            logger.error(f"Extraction attempt failed: {str(e)}")
+            raise Exception(f"Failed to extract audio: {str(e)}")
     
     except Exception as e:
         logger.error(f"yt-dlp extraction failed: {str(e)}")

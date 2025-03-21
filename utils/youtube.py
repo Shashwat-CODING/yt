@@ -16,8 +16,9 @@ def extract_audio_url(url):
             logger.warning(f"Cookies file not found at {cookies_path}. Authentication may fail.")
         
         # Configure yt-dlp options with cookies only
+        # Using a more flexible format selection to prevent format errors
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',  # More forgiving format selection
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
@@ -34,11 +35,32 @@ def extract_audio_url(url):
                 info = ydl.extract_info(url, download=False)
                 logger.info(f"Successfully extracted info for {url}")
                 return {
-                    'url': info['url'],
-                    'title': info['title'],
-                    'author': info['uploader'],
-                    'thumbnail': info['thumbnail']
+                    'url': info.get('url', ''),
+                    'title': info.get('title', 'Unknown Title'),
+                    'author': info.get('uploader', 'Unknown Uploader'),
+                    'thumbnail': info.get('thumbnail', '')
                 }
+        except yt_dlp.utils.DownloadError as format_error:
+            logger.warning(f"Format error: {str(format_error)}")
+            
+            # Try again with a different format specification
+            logger.info("Trying with a more generic format selector")
+            ydl_opts['format'] = 'best'  # Try with any available format
+            
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    logger.info(f"Successfully extracted info with fallback format")
+                    return {
+                        'url': info.get('url', ''),
+                        'title': info.get('title', 'Unknown Title'),
+                        'author': info.get('uploader', 'Unknown Uploader'),
+                        'thumbnail': info.get('thumbnail', '')
+                    }
+            except Exception as fallback_error:
+                logger.error(f"Fallback extraction failed: {str(fallback_error)}")
+                raise Exception(f"Failed to extract with fallback format: {str(fallback_error)}")
+                
         except Exception as e:
             logger.error(f"Extraction attempt failed: {str(e)}")
             raise Exception(f"Failed to extract audio: {str(e)}")

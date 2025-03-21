@@ -25,7 +25,7 @@ def test_proxy(proxy_url, timeout=3):
         return False, 999  # Large number to indicate failure
 
 def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
-    """Extract audio stream URL from YouTube video using yt-dlp with proxy first, then direct fallback"""
+    """Extract audio stream URL from YouTube video using yt-dlp with proxy if available, otherwise direct"""
     try:
         # Define the path to the client secrets file relative to this script
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,9 +52,10 @@ def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
         cookies_arg = f"--cookies {shlex.quote(cookies_path)}" if os.path.exists(cookies_path) else ""
         logger.info(f"Cookies path: {cookies_path}, exists: {os.path.exists(cookies_path)}")
         
-        # Get proxies from the dynamic JSON with a short timeout
-        proxies = []
+        # Try to get proxies, but don't fail if we can't get them
+        working_proxies = []
         try:
+            # Get proxies from the dynamic JSON with a short timeout
             response = requests.get(
                 "https://backendmix.vercel.app/ips", 
                 timeout=5
@@ -63,37 +64,36 @@ def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
                 proxy_data = response.json()
                 proxies = proxy_data.get('proxies', [])
                 logger.info(f"Fetched {len(proxies)} proxies")
+                
+                # Only test proxies if we actually got some
+                if proxies:
+                    # Quick test all proxies concurrently
+                    working_proxies_with_times = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(proxies))) as executor:
+                        future_to_proxy = {executor.submit(test_proxy, f"http://{proxy}", 3): proxy for proxy in proxies}
+                        for future in concurrent.futures.as_completed(future_to_proxy, timeout=8):
+                            proxy = future_to_proxy[future]
+                            try:
+                                success, response_time = future.result()
+                                if success:
+                                    working_proxies_with_times.append((proxy, response_time))
+                            except Exception:
+                                pass
+                    
+                    # Sort proxies by response time (fastest first)
+                    working_proxies_with_times.sort(key=lambda x: x[1])
+                    working_proxies = [p[0] for p in working_proxies_with_times]
+                    
+                    if working_proxies:
+                        logger.info(f"Found {len(working_proxies)} working proxies out of {len(proxies)}")
+                    else:
+                        logger.warning("No working proxies found, will use direct connection")
             else:
-                logger.warning("Failed to fetch proxies, but will still try to use them if available")
+                logger.warning("Failed to fetch proxies, will use direct connection")
         except Exception as e:
-            logger.warning(f"Error fetching proxies: {str(e)}")
+            logger.warning(f"Error fetching or testing proxies: {str(e)}, will use direct connection")
         
-        # Quick test all proxies concurrently
-        working_proxies_with_times = []
-        if proxies:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(proxies))) as executor:
-                future_to_proxy = {executor.submit(test_proxy, f"http://{proxy}", 3): proxy for proxy in proxies}
-                for future in concurrent.futures.as_completed(future_to_proxy, timeout=8):
-                    proxy = future_to_proxy[future]
-                    try:
-                        success, response_time = future.result()
-                        if success:
-                            working_proxies_with_times.append((proxy, response_time))
-                    except Exception:
-                        pass
-            
-            # Sort proxies by response time (fastest first)
-            working_proxies_with_times.sort(key=lambda x: x[1])
-            working_proxies = [p[0] for p in working_proxies_with_times]
-            
-            if working_proxies:
-                logger.info(f"Found {len(working_proxies)} working proxies out of {len(proxies)}")
-            else:
-                logger.warning("No working proxies found")
-        else:
-            working_proxies = []
-            
-        # STEP 1: Try proxies if available (PROXY FIRST APPROACH)
+        # If we have working proxies, try them first
         if working_proxies:
             for proxy in working_proxies:
                 try:
@@ -142,37 +142,11 @@ def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
                     except Exception as sub_e:
                         logger.warning(f"Subprocess with proxy {proxy} failed: {str(sub_e)}")
                         continue
-        else:
-            logger.warning("No working proxies available, skipping proxy attempts")
         
-        # STEP 2: All proxies failed or none available, try direct connection with short timeout
-        logger.info("Trying direct connection with short timeout")
-        try:
-            ydl_opts = {
-                'format': 'bestaudio',
-                'quiet': True,
-                'no_warnings': True,
-                'socket_timeout': 8,  # Short timeout for first direct attempt
-                'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-            }
-            
-            if os.path.exists(cookies_path):
-                ydl_opts['cookiefile'] = cookies_path
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                logger.info("Successfully extracted with direct connection (short timeout)")
-                return {
-                    'url': info['url'],
-                    'title': info['title'],
-                    'author': info['uploader'],
-                    'thumbnail': info['thumbnail']
-                }
-        except Exception as e:
-            logger.warning(f"Direct connection with short timeout failed: {str(e)}")
-            
-        # STEP 3: Final attempt with direct connection and longer timeout
-        logger.info("Trying direct connection with longer timeout")
+        # No working proxies or all proxies failed, use direct connection
+        logger.info("Using direct connection")
+        
+        # Try direct connection with reasonable timeout
         try:
             ydl_opts = {
                 'format': 'bestaudio',
@@ -187,7 +161,7 @@ def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                logger.info("Successfully extracted with direct connection and longer timeout")
+                logger.info("Successfully extracted with direct connection")
                 return {
                     'url': info['url'],
                     'title': info['title'],
@@ -195,17 +169,17 @@ def extract_audio_url(url, max_timeout=30, proxy_timeout=5):
                     'thumbnail': info['thumbnail']
                 }
         except Exception as e:
-            logger.warning(f"Direct connection with longer timeout failed: {str(e)}")
+            logger.warning(f"Direct connection failed: {str(e)}")
             
             # Final attempt: Try subprocess without proxy
             try:
                 cmd = f"yt-dlp --socket-timeout {max_timeout} {cookies_arg} -f bestaudio --dump-json {shlex.quote(url)}"
-                logger.info(f"Running final subprocess without proxy: {cmd}")
+                logger.info(f"Running subprocess without proxy: {cmd}")
                 
                 result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=max_timeout+5)
                 if result.stdout:
                     info = json.loads(result.stdout)
-                    logger.info("Successfully extracted with final subprocess without proxy")
+                    logger.info("Successfully extracted with subprocess without proxy")
                     return {
                         'url': info.get('url', ''),
                         'title': info.get('title', ''),

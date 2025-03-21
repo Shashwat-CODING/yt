@@ -18,7 +18,7 @@ def extract_audio_url(url):
         # Configure yt-dlp options with cookies only
         # Using a more flexible format selection to prevent format errors
         ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',  # More forgiving format selection
+            'format': 'bestaudio',  # More forgiving format selection
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,

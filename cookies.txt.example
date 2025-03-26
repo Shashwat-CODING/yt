@@ -1,0 +1,30 @@
+# Netscape HTTP Cookie File
+# This is an example cookies.txt file.
+# To use cookies with the YouTube Audio Player:
+# 1. Log in to your YouTube account in a browser
+# 2. Export your cookies using a browser extension (in Netscape/Mozilla format)
+# 3. Save the file as cookies.txt (not cookies.txt.example) in this directory
+# 4. Restart the application
+#
+# Format:
+# domain  flag  path  secure  expiration  name  value
+#
+# Example YouTube cookies (these are placeholders, not real cookies):
+.youtube.com	TRUE	/	FALSE	1800000000	GPS	1
+.youtube.com	TRUE	/	TRUE	1800000000	VISITOR_INFO1_LIVE	abcdefghijk-lmnop
+.youtube.com	TRUE	/	TRUE	1800000000	YSC	abcdefghijklm
+.youtube.com	TRUE	/	TRUE	1800000000	CONSENT	YES+cb.20220101-01-p0.en+FX+000
+.youtube.com	TRUE	/	TRUE	1800000000	LOGIN_INFO	AFmmF2swRAIgf0KxI_abcdefghijklmnopqrst:20220101:0:01:7:0
+.youtube.com	TRUE	/	TRUE	1800000000	PREF	f4=1000&f6=2000&f5=3000
+.youtube.com	TRUE	/	TRUE	1800000000	SID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	HSID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	SSID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	APISID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	SAPISID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	__Secure-1PAPISID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	__Secure-3PAPISID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	__Secure-1PSID	abcdefghijklmnopqrst
+.youtube.com	TRUE	/	TRUE	1800000000	__Secure-3PSID	abcdefghijklmnopqrst
+
+# Note: Replace these placeholders with your actual cookies from YouTube.
+# IMPORTANT: Do not share your real cookies.txt file as it contains your login information!

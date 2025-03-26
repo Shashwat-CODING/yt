@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Audio Player</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>
+                <i class="fab fa-youtube"></i> 
+                YouTube Audio Player
+            </h1>
+        </header>
+
+        <main>
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="Search YouTube...">
+                <button id="search-button">
+                    <i class="fas fa-search"></i> Search
+                </button>
+            </div>
+
+            <div class="content-container">
+                <div class="results-container">
+                    <h2>Search Results</h2>
+                    <div id="search-results" class="results-list"></div>
+                </div>
+
+                <div class="player-container">
+                    <div class="now-playing">
+                        <h2>Now Playing</h2>
+                        <div id="current-track">
+                            <div class="track-empty">
+                                <i class="fas fa-music"></i>
+                                <p>No track selected</p>
+                            </div>
+                            <div class="track-info" style="display: none;">
+                                <div class="track-thumbnail">
+                                    <img id="track-thumbnail" src="" alt="Thumbnail">
+                                </div>
+                                <div class="track-details">
+                                    <h3 id="track-title"></h3>
+                                    <p id="track-channel"></p>
+                                    <p id="track-duration"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="player-controls">
+                        <audio id="audio-player" controls></audio>
+                    </div>
+                </div>
+
+                <div class="playlists-container">
+                    <h2>Playlists</h2>
+                    <div class="playlist-controls">
+                        <input type="text" id="playlist-name" placeholder="New playlist name...">
+                        <button id="create-playlist-button">
+                            <i class="fas fa-plus"></i> Create
+                        </button>
+                    </div>
+                    <div id="playlists" class="playlists-list"></div>
+                    <div id="playlist-tracks" class="playlist-tracks" style="display: none;">
+                        <h3 id="current-playlist-name"></h3>
+                        <div id="playlist-tracks-list"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>&copy; 2024 YouTube Audio Player | Flask Web App</p>
+        </footer>
+    </div>
+
+    <!-- Templates for dynamic content -->
+    <template id="search-result-template">
+        <div class="result-item">
+            <div class="result-thumbnail">
+                <img src="" alt="Thumbnail">
+            </div>
+            <div class="result-details">
+                <h3 class="result-title"></h3>
+                <p class="result-channel"></p>
+                <p class="result-duration"></p>
+            </div>
+            <div class="result-actions">
+                <button class="play-button">
+                    <i class="fas fa-play"></i> Play
+                </button>
+                <button class="add-to-playlist-button">
+                    <i class="fas fa-plus"></i> Add to Playlist
+                </button>
+            </div>
+        </div>
+    </template>
+
+    <template id="playlist-item-template">
+        <div class="playlist-item">
+            <div class="playlist-name"></div>
+            <div class="playlist-actions">
+                <button class="load-playlist-button">
+                    <i class="fas fa-folder-open"></i> Open
+                </button>
+                <button class="delete-playlist-button">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+    </template>
+
+    <template id="playlist-track-template">
+        <div class="playlist-track-item">
+            <div class="track-details">
+                <h4 class="track-title"></h4>
+                <p class="track-channel"></p>
+            </div>
+            <div class="track-actions">
+                <button class="play-track-button">
+                    <i class="fas fa-play"></i> Play
+                </button>
+                <button class="remove-track-button">
+                    <i class="fas fa-times"></i> Remove
+                </button>
+            </div>
+        </div>
+    </template>
+
+    <div id="playlist-selection-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h3>Select Playlist</h3>
+            <div id="playlist-selection-list"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,9 +1,9 @@
 import os
+import http.cookiejar
 from flask import Flask, jsonify
 from flask_cors import CORS
 from datetime import datetime
 from innertube import InnerTube  # Import from local module
-import json  # Added for handling cookies
 
 app = Flask(__name__)
 CORS(app)
@@ -11,20 +11,44 @@ CORS(app)
 # Get the absolute path of cookies.txt in the same folder as the script
 cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
 
+def parse_netscape_cookie_file(cookie_file):
+    """
+    Parse a Netscape-style cookie file and return raw cookie string
+    """
+    cookie_jar = http.cookiejar.MozillaCookieJar(cookie_file)
+    cookie_jar.load(ignore_discard=True, ignore_expires=True)
+    
+    # Generate cookie string in the format "COOKIE1=value; COOKIE2=value;"
+    cookie_string = '; '.join([f"{cookie.name}={cookie.value}" for cookie in cookie_jar])
+    return cookie_string
+
 @app.route('/streams/<video_id>', methods=['GET'])
 def get_video_info(video_id):
     try:
-        # Read cookies from file if it exists and is not empty
-        cookies = None
-        if os.path.exists(cookies_path) and os.path.getsize(cookies_path) > 0:
+        # Attempt to parse cookies
+        cookie_string = None
+        if os.path.exists(cookies_path):
             try:
-                with open(cookies_path, 'r') as f:
-                    cookies = json.load(f)
-            except json.JSONDecodeError:
-                print(f"Warning: Unable to parse cookies from {cookies_path}. Proceeding without cookies.")
+                cookie_string = parse_netscape_cookie_file(cookies_path)
+                print("Parsed cookie string:", cookie_string[:100] + "..." if len(cookie_string) > 100 else cookie_string)  # Truncated debug print
+            except Exception as e:
+                print(f"Warning: Unable to parse cookies. Error: {e}")
 
-        # Initialize InnerTube with optional cookies
-        yt = InnerTube("ANDROID", cookies=cookies) if cookies else InnerTube("ANDROID")
+        # Initialize InnerTube
+        try:
+            # Try to pass cookie string directly if available
+            yt = InnerTube("ANDROID", proxy=None)
+            
+            # If a cookie string exists, set it manually
+            if cookie_string:
+                # Attempt to set cookies via a method that might exist
+                if hasattr(yt, 'set_cookie'):
+                    yt.set_cookie(cookie_string)
+                elif hasattr(yt, '_InnerTube__cookie'):
+                    yt._InnerTube__cookie = cookie_string
+        except Exception as e:
+            print(f"Error initializing InnerTube: {e}")
+            yt = InnerTube("ANDROID")
         
         data = yt.player(video_id)
 
@@ -33,12 +57,6 @@ def get_video_info(video_id):
 
         video_details = data["videoDetails"]
         streaming_data = data["streamingData"]
-
-        # Convert upload date to timestamp
-        try:
-            upload_timestamp = int(datetime.strptime(video_details.get("publishDate", ""), "%Y-%m-%d").timestamp())
-        except:
-            upload_timestamp = 0
 
         # Piped-like response structure
         response = {

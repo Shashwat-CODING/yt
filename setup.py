@@ -3,6 +3,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from datetime import datetime
 from innertube import InnerTube  # Import from local module
+import json  # Added for handling cookies
 
 app = Flask(__name__)
 CORS(app)
@@ -13,8 +14,18 @@ cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies
 @app.route('/streams/<video_id>', methods=['GET'])
 def get_video_info(video_id):
     try:
-        # Initialize InnerTube with cookies
-        yt = InnerTube("ANDROID", cookie_filepath=cookies_path)
+        # Read cookies from file if it exists and is not empty
+        cookies = None
+        if os.path.exists(cookies_path) and os.path.getsize(cookies_path) > 0:
+            try:
+                with open(cookies_path, 'r') as f:
+                    cookies = json.load(f)
+            except json.JSONDecodeError:
+                print(f"Warning: Unable to parse cookies from {cookies_path}. Proceeding without cookies.")
+
+        # Initialize InnerTube with optional cookies
+        yt = InnerTube("ANDROID", cookies=cookies) if cookies else InnerTube("ANDROID")
+        
         data = yt.player(video_id)
 
         if "videoDetails" not in data or "streamingData" not in data:

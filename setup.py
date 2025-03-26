@@ -1,44 +1,79 @@
-#!/usr/bin/env python3
+from flask import Flask, jsonify
+from flask_cors import CORS
+from datetime import datetime
+from innertube import InnerTube  # Import from local module
 
-from setuptools import setup, find_packages
+app = Flask(__name__)
+CORS(app)
 
-setup(
-    name="youtube-audio-player",
-    version="0.1.0",
-    description="A Python-based YouTube audio player that allows you to search, extract, and play audio from YouTube videos",
-    long_description=open("README.md").read(),
-    long_description_content_type="text/markdown",
-    author="Your Name",
-    author_email="your.email@example.com",
-    url="https://github.com/yourusername/youtube-audio-player",
-    packages=find_packages(),
-    include_package_data=True,
-    install_requires=[
-        "flask>=3.1.0",
-        "flask-cors>=5.0.1",
-        "innertube>=2.1.16",
-        "pyaudio>=0.2.14",
-        "pytube>=15.0.0",
-        "requests>=2.32.3",
-        "rich>=13.9.4",
-    ],
-    entry_points={
-        "console_scripts": [
-            "youtube-terminal=youtube_audio_player:main",
-            "youtube-web=web_app:app.run",
-        ],
-    },
-    classifiers=[
-        "Development Status :: 4 - Beta",
-        "Environment :: Console",
-        "Environment :: Web Environment",
-        "Intended Audience :: End Users/Desktop",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.11",
-        "Topic :: Multimedia :: Sound/Audio :: Players",
-    ],
-    python_requires=">=3.11",
-    keywords="youtube, audio, player, music, streaming",
-    license="MIT",
-)
+@app.route('/streams/<video_id>', methods=['GET'])
+def get_video_info(video_id):
+    try:
+        yt = InnerTube("ANDROID")
+        data = yt.player(video_id)
+
+        if "videoDetails" not in data or "streamingData" not in data:
+            return jsonify({"error": "No video details found"}), 404
+
+        video_details = data["videoDetails"]
+        streaming_data = data["streamingData"]
+
+        # Convert upload date to timestamp
+        try:
+            upload_timestamp = int(datetime.strptime(video_details.get("publishDate", ""), "%Y-%m-%d").timestamp())
+        except:
+            upload_timestamp = 0
+
+        # Piped-like response structure
+        response = {
+            "title": video_details.get("title", ""),
+            "description": video_details.get("shortDescription", ""),
+            "uploadDate": video_details.get("publishDate", ""),
+            "uploader": video_details.get("author", ""),
+            "uploaderUrl": f"/channel/{video_details.get('channelId', '')}",
+            "uploaderAvatar": "",
+            "thumbnailUrl": video_details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url", "") if "thumbnail" in video_details else "",
+            "hls": streaming_data.get("hlsManifestUrl", ""),
+            "dash": streaming_data.get("dashManifestUrl", ""),
+            "duration": int(video_details.get("lengthSeconds", 0)),
+            "views": int(video_details.get("viewCount", 0)),
+            "likes": 0,  # YouTube no longer provides likes count
+            "audioStreams": [
+                {
+                    "url": audio_fmt.get("url", ""),
+                    "format": "AUDIO",
+                    "quality": audio_fmt.get("audioQuality", "").replace("AUDIO_QUALITY_", "").capitalize(),
+                    "mimeType": audio_fmt.get("mimeType", ""),
+                    "bitrate": audio_fmt.get("bitrate", 0),
+                    "codec": audio_fmt.get("mimeType", "").split(";")[0].split("/")[-1] if "mimeType" in audio_fmt else "",
+                    "size": int(audio_fmt.get("contentLength", 0))
+                }
+                for audio_fmt in streaming_data.get("adaptiveFormats", []) 
+                if "audio" in audio_fmt.get("mimeType", "").lower()
+            ],
+            "videoStreams": [
+                {
+                    "url": video_fmt.get("url", ""),
+                    "format": "VIDEO",
+                    "quality": video_fmt.get("qualityLabel", ""),
+                    "mimeType": video_fmt.get("mimeType", ""),
+                    "bitrate": video_fmt.get("bitrate", 0),
+                    "codec": video_fmt.get("mimeType", "").split(";")[0].split("/")[-1] if "mimeType" in video_fmt else "",
+                    "width": video_fmt.get("width", 0),
+                    "height": video_fmt.get("height", 0),
+                    "size": int(video_fmt.get("contentLength", 0))
+                }
+                for video_fmt in streaming_data.get("adaptiveFormats", []) 
+                if "video" in video_fmt.get("mimeType", "").lower() and "audio" not in video_fmt.get("mimeType", "").lower()
+            ],
+            "relatedStreams": [],
+            "livestreamStream": streaming_data.get("hlsManifestUrl", "") if video_details.get("isLiveContent", False) else ""
+        }
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=3001, debug=True)

@@ -1,3 +1,4 @@
+import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 from datetime import datetime
@@ -6,10 +7,14 @@ from innertube import InnerTube  # Import from local module
 app = Flask(__name__)
 CORS(app)
 
+# Get the absolute path of cookies.txt in the same folder as the script
+cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+
 @app.route('/streams/<video_id>', methods=['GET'])
 def get_video_info(video_id):
     try:
-        yt = InnerTube("ANDROID")
+        # Initialize InnerTube with cookies
+        yt = InnerTube("ANDROID", cookie_filepath=cookies_path)
         data = yt.player(video_id)
 
         if "videoDetails" not in data or "streamingData" not in data:

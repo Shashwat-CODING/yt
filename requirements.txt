@@ -1,0 +1,13 @@
+flask==3.1.0
+flask-cors==5.0.1
+innertube==2.1.16
+pyaudio==0.2.14
+pytube==15.0.0
+requests==2.32.3
+rich==13.9.4
+
+# Development dependencies
+pytest==8.0.0
+black==24.3.0
+flake8==7.0.0
+isort==5.12.0

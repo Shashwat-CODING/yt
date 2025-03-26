@@ -1,0 +1,46 @@
+ Installing requests (2.32.3)
+  • Installing rich (13.9.4)
+==> Transferred 167MB in 7s. Extraction took 2s.
+  ChefBuildError
+  Backend subprocess exited when trying to invoke build_wheel
+  
+  /tmp/tmpeglg75rw/.venv/lib/python3.11/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+  !!
+  
+          ********************************************************************************
+          Please consider removing the following classifiers in favor of a SPDX license expression:
+  
+          License :: OSI Approved :: MIT License
+  
+          See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+          ********************************************************************************
+  
+  !!
+    self._finalize_license_expression()
+  running bdist_wheel
+  running build
+  running build_py
+  creating build/lib.linux-x86_64-cpython-311/pyaudio
+  copying src/pyaudio/__init__.py -> build/lib.linux-x86_64-cpython-311/pyaudio
+  running build_ext
+  building 'pyaudio._portaudio' extension
+  creating build/temp.linux-x86_64-cpython-311/src/pyaudio
+  gcc -Wsign-compare -DNDEBUG -g -fwrapv -O3 -Wall -fPIC -I/usr/local/include -I/usr/include -I/tmp/tmpeglg75rw/.venv/include -I/usr/local/include/python3.11 -c src/pyaudio/device_api.c -o build/temp.linux-x86_64-cpython-311/src/pyaudio/device_api.o
+  src/pyaudio/device_api.c:9:10: fatal error: portaudio.h: No such file or directory
+      9 | #include "portaudio.h"
+        |          ^~~~~~~~~~~~~
+  compilation terminated.
+  error: command '/usr/bin/gcc' failed with exit code 1
+  
+  at /home/render/.python-poetry/venv/lib/python3.11/site-packages/poetry/installation/chef.py:164 in _prepare
+      160│ 
+      161│                 error = ChefBuildError("\n\n".join(message_parts))
+      162│ 
+      163│             if error is not None:
+    → 164│                 raise error from None
+      165│ 
+      166│             return path
+      167│ 
+      168│     def _prepare_sdist(self, archive: Path, destination: Path | None = None) -> Path:
+Note: This error originates from the build backend, and is likely not a problem with poetry but with pyaudio (0.2.14) not supporting PEP 517 builds. You can verify this by running 'pip wheel --no-cache-dir --use-pep517 "pyaudio (==0.2.14)"'.
+==> Build failed 😞

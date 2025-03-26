@@ -1,14 +1,13 @@
-# YouTube Audio Player
+# YouTube Audio Player Web App
 
-A Python-based YouTube audio player that allows you to search, extract, and play audio from YouTube videos. This application features both a terminal-based interface and a web interface for a more user-friendly experience.
+A Python-based YouTube audio player web application that allows you to search, extract, and play audio from YouTube videos directly in your browser.
 
 ## Features
 
 - Search for YouTube videos using keywords
 - Play audio directly from YouTube without downloading the entire video
 - Create and manage multiple playlists
-- Terminal-based interface for command-line enthusiasts
-- Web application interface with responsive design
+- Clean, responsive web interface
 - Support for cookies.txt for accessing age-restricted or member-only content
 - Direct streaming of audio for faster playback
 
@@ -16,8 +15,8 @@ A Python-based YouTube audio player that allows you to search, extract, and play
 
 ### Prerequisites
 
-- Python 3.6 or higher
-- Required packages: flask, flask-cors, innertube, pytube, pyaudio, requests, rich
+- Python 3.11 or higher
+- Required packages: flask, flask-cors, innertube, pytube, pyaudio, requests
 
 ### Installation
 
@@ -27,7 +26,7 @@ A Python-based YouTube audio player that allows you to search, extract, and play
 2. Install the required packages:
 
 ```bash
-pip install flask flask-cors innertube pytube pyaudio requests rich
+pip install flask flask-cors innertube pytube pyaudio requests
 ```
 
 #### Method 2: Install as a package (For developers)
@@ -62,29 +61,7 @@ poetry install
 poetry shell
 ```
 
-### Running the Terminal Application
-
-#### Method 1: Direct execution
-
-To run the terminal-based application:
-
-```bash
-python youtube_audio_player.py
-```
-
-#### Method 2: Using Poetry scripts (if installed with Poetry)
-
-```bash
-poetry run youtube-terminal
-```
-
-The terminal application provides a text-based interface with the following features:
-- Search for YouTube videos
-- Play/pause/stop audio playback
-- Create and manage playlists
-- Navigate using keyboard shortcuts
-
-### Running the Web Application
+### Running the Application
 
 #### Method 1: Direct execution
 
@@ -128,8 +105,6 @@ An example `cookies.txt.example` file is included to show the expected format.
 
 ## Usage Examples
 
-### Web Interface
-
 1. **Searching for videos**:
    - Enter keywords in the search bar and click "Search"
    - Results will display with thumbnails, titles, and channel information
@@ -146,30 +121,13 @@ An example `cookies.txt.example` file is included to show the expected format.
    - Click the "+" button next to any track
    - Select a playlist from the dropdown menu
 
-### Terminal Interface
-
-1. **Navigating the menu**:
-   - Use arrow keys to navigate
-   - Press Enter to select an option
-
-2. **Searching for videos**:
-   - Select "Search YouTube" from the main menu
-   - Enter your search terms
-   - Use arrow keys to navigate results
-
-3. **Playing audio**:
-   - Select a track and press Enter to play
-   - Use keyboard shortcuts for playback control
-
 ## Project Structure
 
-- `youtube_audio_player.py` - Terminal-based application entry point
 - `web_app.py` - Web application entry point
 - `modules/` - Core modules
   - `youtube_client.py` - YouTube API client using innertube and pytube
   - `audio_player.py` - Audio playback functionality with PyAudio
   - `playlist_manager.py` - Playlist creation and management
-  - `terminal_ui.py` - Terminal user interface using the Rich library
 - `static/` - Web application static files (CSS, JavaScript)
 - `templates/` - Web application HTML templates
 - `playlists/` - Directory for stored playlist files (JSON format)
